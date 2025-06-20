@@ -1,6 +1,6 @@
 """
-Projet BAM - Classification multi-tâches (sexe et date) avec distillation de connaissances
-Architecture : CamemBERT + distillation avec teacher annealing 
+Projet BAM - Classification multi-tâches avec distillation de connaissances
+Architecture : CamemBERT + distillation avec teacher annealing + feature annealing
 """
 
 import os
@@ -18,9 +18,9 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from transformers import (
     CamembertModel, CamembertTokenizer, FlaubertModel, FlaubertTokenizer,
-    get_linear_schedule_with_warmup
+    get_linear_schedule_with_warmup, AdamW
 )
-from torch.optim import AdamW
+
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 import scipy.stats as stats
@@ -74,6 +74,17 @@ class Config:
     MIN_CHUNKS_PER_BOOK = 3
     N_BOOTSTRAP = 1000
     CONFIDENCE_LEVEL = 0.95
+    
+    # Constantes pour évaluation et interface
+    TEMPORAL_PERIODS = {
+        0: "1820-1839", 1: "1840-1859", 2: "1860-1879", 3: "1880-1899", 4: "1900-1919",
+        5: "1920-1939", 6: "1940-1959", 7: "1960-1979", 8: "1980-1999", 9: "2000-2020"
+    }
+    
+    TEMPORAL_MIDPOINTS = {
+        0: 1830, 1: 1850, 2: 1870, 3: 1890, 4: 1910,
+        5: 1930, 6: 1950, 7: 1970, 8: 1990, 9: 2010
+    }
 
 config = Config()
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -927,7 +938,12 @@ def main():
     print("Initialisation Xavier")
     
     temporal_acc_final = results['book_temporal_acc'] if results['book_results'] else results['chunk_temporal_acc']
-    
+    print("\nObjectif 70% temporel:")
+    if temporal_acc_final >= 0.70:
+        print("ATTEINT! {:.1%}".format(temporal_acc_final))
+    else:
+        needed = 0.70 - temporal_acc_final
+        print("Non atteint: {:.1%} (manque {:.1%})".format(temporal_acc_final, needed))
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_summary = {
