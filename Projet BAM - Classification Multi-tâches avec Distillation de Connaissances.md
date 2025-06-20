@@ -389,7 +389,6 @@ Ces résultats confirment la faisabilité des tâches et établissent des baseli
 3. **Pondération par confiance** : Poids selon la confiance de chaque chunk
 
 **Résultats** 
-![alt text](image-2.png)
 
 ![alt text](image-3.png)
 
