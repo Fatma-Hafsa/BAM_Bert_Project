@@ -339,9 +339,9 @@ class TextPreprocessor:
 def main():
     
     # Chemins
-    corpus_path = "content/CORPUS POUR MULTIHEAD - février 2025"
+    corpus_path = "/content/CORPUS POUR MULTIHEAD - février 2025"
     metadata_path = "/content/metadata_clean.csv"
-    output_dir = "content/preprocessed_data"
+    output_dir = "/content/preprocessed_data"
     
     # Initialiser le préprocesseur
     preprocessor = TextPreprocessor(
