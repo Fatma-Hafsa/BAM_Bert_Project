@@ -403,7 +403,7 @@ Ces résultats confirment la faisabilité des tâches et établissent des baseli
 ```
 projet-bam/
 ├── README.md                 # Ce fichier
-├── data_preprocess.py        #script principal du split et chunking
+├── data_preprocess.py        #Script principal pour split et chunking
 ├── requirements.txt          # Dépendances Python
 ├── bam_project.py           # Script principal d'entraînement
 ├── evaluation.py            # Évaluation et visualisations
