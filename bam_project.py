@@ -927,12 +927,7 @@ def main():
     print("Initialisation Xavier")
     
     temporal_acc_final = results['book_temporal_acc'] if results['book_results'] else results['chunk_temporal_acc']
-    print("\nObjectif 70% temporel:")
-    if temporal_acc_final >= 0.70:
-        print("ATTEINT! {:.1%}".format(temporal_acc_final))
-    else:
-        needed = 0.70 - temporal_acc_final
-        print("Non atteint: {:.1%} (manque {:.1%})".format(temporal_acc_final, needed))
+    
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_summary = {
