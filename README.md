@@ -181,8 +181,15 @@ Cette stratégie permet au student de :
 
 Un aspect crucial de la méthodologie concerne la prévention du **data leakage**. Dans un contexte de classification d'auteurs, le risque principal est que des chunks du même livre se retrouvent à la fois dans l'ensemble d'entraînement et de test, permettant au modèle de "mémoriser" des auteurs spécifiques plutôt que d'apprendre des patterns stylistiques généralisables.
 
-Notre stratégie de split  garantit l'absence de leakage.
+Notre stratégie de split **au niveau des livres** garantit l'absence de leakage :
+- Train : 64% des livres
+- Validation : 15.5% des livres  
+- Test : 20.5% des livres
 
+Cette approche présente plusieurs avantages :
+- **Validation réaliste** : Le modèle est testé sur des auteurs jamais vus
+- **Généralisation** : Force l'apprentissage de patterns stylistiques généraux
+- **Absence de biais** : Aucun chunk du même livre dans train et test
 
 
 Cette approche présente plusieurs avantages :
@@ -411,17 +418,17 @@ projet-bam/
 ├── data/
 │   ├── preprocessed_data/   # Données préprocessées
 │   └── raw_data/           # Données brutes 
-├── models/
+├── models/                     # Non chargé sur git
 │   ├── teacher_gender_best.pth
 │   ├── teacher_temporal_best.pth
 │   └── bam_student_best.pth
-├── results/
+├── results/                   # Non chargé sur git
 │   ├── final_results.json
 │   ├── evaluation_results.json
 │   └── training_logs/
 ├── plots/
 │   ├── bam_student_evaluation.png
-│   ├── temporal_accuracy.png
+│   ├── accuracy_evolution.png
 │   
 
 ```
