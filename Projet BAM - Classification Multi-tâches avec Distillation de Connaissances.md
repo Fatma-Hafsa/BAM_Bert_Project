@@ -359,7 +359,23 @@ Ces résultats confirment la faisabilité des tâches et établissent des baseli
 **Résultats et discussion** :
 ![alt text](image.png)
 
+
+
+
+
+
+
+
 ![alt text](image-1.png)
+
+
+
+
+
+
+
+
+
  La distillation améliore les performances sur les deux tâches
 
 
