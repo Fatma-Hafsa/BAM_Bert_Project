@@ -40,7 +40,7 @@ from tqdm import tqdm
 import random
 from datetime import datetime
 
-# Configuration pour la reproductibilité
+
 RANDOM_SEED = 42
 np.random.seed(RANDOM_SEED)
 random.seed(RANDOM_SEED)
@@ -174,13 +174,11 @@ def split_by_books(data):
     
     book_df = pd.DataFrame(book_metadata)
     
-    # Stratification combinée
     book_df['strat_label'] = (
         book_df['author_gender'].astype(str) + '_' +
         book_df['temporal_class'].astype(str)
     )
     
-    # Split train+val vs test
     train_val_books, test_books = train_test_split(
         book_df,
         test_size=config.TEST_SIZE,
@@ -188,7 +186,6 @@ def split_by_books(data):
         random_state=RANDOM_SEED
     )
     
-    # Split train vs val
     if config.VAL_SIZE > 0:
         val_size_adjusted = config.VAL_SIZE / (1 - config.TEST_SIZE)
         train_books, val_books = train_test_split(
@@ -201,7 +198,6 @@ def split_by_books(data):
         train_books = train_val_books
         val_books = pd.DataFrame()
     
-    # Convertir en chunks
     def books_to_chunks(book_df):
         chunks = []
         for _, book_row in book_df.iterrows():
@@ -292,7 +288,6 @@ class BertBAM(nn.Module):
             nn.Dropout(config.DROPOUT_RATE)
         )
         
-        # Têtes de classification selon le type de modèle
         if model_type in ["unified", "teacher_gender"]:
             self.gender_head = nn.Sequential(
                 nn.Linear(config.HIDDEN_DIM, config.HIDDEN_DIM // 2),
@@ -381,7 +376,6 @@ def train_teacher_model(model, train_loader, val_loader, task_type, num_epochs):
         
         avg_loss = total_loss / len(train_loader)
         
-        # Validation
         if val_loader:
             val_acc = evaluate_model(model, val_loader, task_type)
             print(f"Epoch {epoch+1}: Loss = {avg_loss:.4f}, Val Acc = {val_acc:.4f}")
@@ -430,21 +424,16 @@ def train_student_with_distillation(student_model, teacher_gender, teacher_tempo
             
             optimizer.zero_grad()
             
-            # Prédictions du student
             student_outputs = student_model(input_ids, attention_mask)
             
-            # Prédictions des teachers
             with torch.no_grad():
                 teacher_gender_outputs = teacher_gender(input_ids, attention_mask)
                 teacher_temporal_outputs = teacher_temporal(input_ids, attention_mask)
             
-            # Loss de classification standard
             gender_loss = criterion(student_outputs["gender_logits"], gender_labels)
             temporal_loss = criterion(student_outputs["temporal_logits"], temporal_labels)
             classification_loss = (gender_loss + temporal_loss) / 2
             
-            # Loss de distillation
-            # Teacher annealing: réduction progressive de l'influence des teachers
             if config.TEACHER_ANNEALING:
                 progress = (epoch * len(train_loader) + step) / total_steps
                 if progress < config.ANNEALING_START:
@@ -458,12 +447,10 @@ def train_student_with_distillation(student_model, teacher_gender, teacher_tempo
             else:
                 teacher_weight = 1.0
             
-            # Distillation pour le genre
             student_gender_soft = F.log_softmax(student_outputs["gender_logits"] / config.TEMPERATURE, dim=1)
             teacher_gender_soft = F.softmax(teacher_gender_outputs["gender_logits"] / config.TEMPERATURE, dim=1)
             gender_distill_loss = kl_div(student_gender_soft, teacher_gender_soft) * (config.TEMPERATURE ** 2)
             
-            # Distillation pour le temporel
             student_temporal_soft = F.log_softmax(student_outputs["temporal_logits"] / config.TEMPERATURE, dim=1)
             teacher_temporal_soft = F.softmax(teacher_temporal_outputs["temporal_logits"] / config.TEMPERATURE, dim=1)
             temporal_distill_loss = kl_div(student_temporal_soft, teacher_temporal_soft) * (config.TEMPERATURE ** 2)
@@ -485,7 +472,6 @@ def train_student_with_distillation(student_model, teacher_gender, teacher_tempo
         
         avg_loss = total_loss / len(train_loader)
         
-        # Validation
         if val_loader:
             val_acc_gender = evaluate_model(student_model, val_loader, "gender")
             val_acc_temporal = evaluate_model(student_model, val_loader, "temporal")
@@ -538,11 +524,9 @@ def evaluate_model(model, dataloader, task_type):
 
 def main():
     
-    # Créer les répertoires
     os.makedirs(config.RESULTS_DIR, exist_ok=True)
     os.makedirs(config.MODELS_DIR, exist_ok=True)
     
-    # Charger les données
     data = load_data()
     train_chunks, val_chunks, test_chunks = split_by_books(data)
     
@@ -564,24 +548,20 @@ def main():
     print(f"  Val: {len(val_loader) if val_loader else 0} batches")
     print(f"  Test: {len(test_loader)} batches")
     
-    # 1. Entraîner les teachers spécialisés
     print("\n" + "="*60)
     print("PHASE 1: Entraînement des teachers spécialisés")
     print("="*60)
     
-    # Teacher pour le genre
     teacher_gender = BertBAM(config.BERT_MODEL, "teacher_gender").to(device)
     teacher_gender = train_teacher_model(
         teacher_gender, train_loader, val_loader, "gender", config.NUM_EPOCHS_TEACHER
     )
     
-    # Teacher pour le temporel
     teacher_temporal = BertBAM(config.BERT_MODEL, "teacher_temporal").to(device)
     teacher_temporal = train_teacher_model(
         teacher_temporal, train_loader, val_loader, "temporal", config.NUM_EPOCHS_TEACHER
     )
     
-    # 2. Entraîner le student avec distillation
     print("\n" + "="*60)
     print("PHASE 2: Entraînement du student avec distillation")
     print("="*60)
@@ -592,17 +572,14 @@ def main():
         train_loader, val_loader, config.NUM_EPOCHS_STUDENT
     )
     
-    # 3. Évaluation finale
     print("\n" + "="*60)
     print("PHASE 3: Évaluation finale")
     print("="*60)
     
-    # Charger le meilleur modèle student
     student_model.load_state_dict(
         torch.load(os.path.join(config.MODELS_DIR, "bam_student_best.pth"))
     )
     
-    # Évaluation sur le test set
     test_acc_gender = evaluate_model(student_model, test_loader, "gender")
     test_acc_temporal = evaluate_model(student_model, test_loader, "temporal")
     
@@ -611,7 +588,6 @@ def main():
     print(f"  Accuracy Temporel: {test_acc_temporal:.4f}")
     print(f"  Accuracy Moyenne: {(test_acc_gender + test_acc_temporal) / 2:.4f}")
     
-    # Sauvegarder les résultats
     results = {
         'test_accuracy_gender': test_acc_gender,
         'test_accuracy_temporal': test_acc_temporal,
