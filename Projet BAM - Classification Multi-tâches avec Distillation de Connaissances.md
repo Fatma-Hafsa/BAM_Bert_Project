@@ -1,8 +1,8 @@
 # Projet BAM - Classification Multi-tâches avec Distillation de Connaissances
 
-**Auteur :** [Votre nom]  
-**Date :** 2024  
-**Institution :** [Votre université/école]
+**Auteur :** Fatma HAFSA
+**Date :** 2025  
+**Institution :** Université Paris Cité
 
 ## Table des matières
 
