@@ -419,7 +419,7 @@ projet-bam/
 ├── plots/
 │   ├── bam_student_evaluation.png
 │   ├── temporal_accuracy.png
-│   └── confusion_matrices/
+│   
 
 ```
 
