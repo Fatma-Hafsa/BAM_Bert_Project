@@ -1,6 +1,6 @@
 """
-Interface de test interactive pour le projet BAM
-Permet de tester le modèle sur de nouveaux textes en temps réel
+Interface de test sophistiquée pour le projet BAM
+Permet de tester le modèle sur les livres du corpus avec navigation et comparaison
 """
 
 import os
@@ -8,14 +8,31 @@ import sys
 import torch
 import torch.nn.functional as F
 import numpy as np
+import random
+from torch.utils.data import DataLoader
 from transformers import CamembertTokenizer
+from collections import defaultdict, Counter
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from bam_project import BertBAM, Config
+from bam_project import BertBAM, TextDataset, Config
 
 config = Config()
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+def load_test_data():
+    print("Chargement des données de test...")
+    
+    test_file = os.path.join(config.DATA_DIR, 'test_chunks.json')
+    if os.path.exists(test_file):
+        import json
+        with open(test_file, 'r', encoding='utf-8') as f:
+            test_data = json.load(f)
+        print("Données de test chargées: {} chunks".format(len(test_data)))
+        return test_data
+    else:
+        print("Fichier de test non trouvé")
+        return []
 
 def load_model():
     print("Chargement du modèle BAM...")
@@ -41,177 +58,390 @@ def load_model():
         print("Erreur lors du chargement: {}".format(e))
         return None, None
 
-def predict_single_text(model, tokenizer, text, max_length=512):
+def predict_chunks(model, dataloader):
     model.eval()
-    
-    encoding = tokenizer(
-        text,
-        truncation=True,
-        padding='max_length',
-        max_length=max_length,
-        return_tensors='pt'
-    )
-    
-    input_ids = encoding['input_ids'].to(device)
-    attention_mask = encoding['attention_mask'].to(device)
+    all_predictions = []
     
     with torch.no_grad():
-        outputs = model(input_ids, attention_mask)
-        
-        predictions = {}
-        
-        if 'gender_logits' in outputs:
-            gender_probs = F.softmax(outputs['gender_logits'], dim=1).cpu().numpy()[0]
-            gender_pred = np.argmax(gender_probs)
-            predictions['gender'] = {
-                'prediction': gender_pred,
-                'probabilities': gender_probs,
-                'confidence': float(gender_probs[gender_pred])
-            }
-        
-        if 'temporal_logits' in outputs:
-            temporal_probs = F.softmax(outputs['temporal_logits'], dim=1).cpu().numpy()[0]
-            temporal_pred = np.argmax(temporal_probs)
+        for batch in dataloader:
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            gender_labels = batch['gender_label'].to(device)
+            temporal_labels = batch['temporal_label'].to(device)
+            book_ids = batch['book_id']
             
-            temporal_barycentre = 0.0
-            for i, prob in enumerate(temporal_probs):
-                temporal_barycentre += config.TEMPORAL_MIDPOINTS[i] * prob
+            outputs = model(input_ids, attention_mask)
             
-            temporal_barycentre_confidence = config.TEMPORAL_MIDPOINTS[temporal_pred]
+            if 'gender_logits' in outputs:
+                gender_preds = torch.argmax(outputs['gender_logits'], dim=1).cpu().numpy()
+                gender_probs = F.softmax(outputs['gender_logits'], dim=1).cpu().numpy()
+            else:
+                gender_preds = np.zeros(len(book_ids), dtype=int)
+                gender_probs = np.zeros((len(book_ids), 2))
             
-            predictions['temporal'] = {
-                'prediction': temporal_pred,
-                'probabilities': temporal_probs,
-                'confidence': float(temporal_probs[temporal_pred]),
-                'barycentre_year': temporal_barycentre,
-                'barycentre_confidence_year': temporal_barycentre_confidence,
-                'predicted_period': config.TEMPORAL_PERIODS[temporal_pred]
-            }
+            if 'temporal_logits' in outputs:
+                temporal_preds = torch.argmax(outputs['temporal_logits'], dim=1).cpu().numpy()
+                temporal_probs = F.softmax(outputs['temporal_logits'], dim=1).cpu().numpy()
+            else:
+                temporal_preds = np.zeros(len(book_ids), dtype=int)
+                temporal_probs = np.zeros((len(book_ids), 10))
+            
+            for i in range(len(book_ids)):
+                all_predictions.append({
+                    'book_id': book_ids[i],
+                    'gender_label': gender_labels[i].item(),
+                    'temporal_label': temporal_labels[i].item(),
+                    'gender_pred': gender_preds[i],
+                    'temporal_pred': temporal_preds[i],
+                    'gender_probs': gender_probs[i].tolist(),
+                    'temporal_probs': temporal_probs[i].tolist()
+                })
     
-    return predictions
+    return all_predictions
 
-def display_predictions(predictions):
-    print("\nPrédictions:")
-    print("-" * 40)
+def aggregate_by_book(predictions):
+    books = defaultdict(list)
+    for pred in predictions:
+        books[pred['book_id']].append(pred)
     
-    if 'gender' in predictions:
-        gender_pred = predictions['gender']['prediction']
-        gender_conf = predictions['gender']['confidence']
-        gender_label = "Homme" if gender_pred == 1 else "Femme"
-        
-        print("Sexe de l'auteur:")
-        print("  Prédiction: {}".format(gender_label))
-        print("  Confiance: {:.1%}".format(gender_conf))
-        
-        probs = predictions['gender']['probabilities']
-        print("  Détail: Femme {:.1%} | Homme {:.1%}".format(probs[0], probs[1]))
+    book_results = []
     
-    if 'temporal' in predictions:
-        temporal_pred = predictions['temporal']['prediction']
-        temporal_conf = predictions['temporal']['confidence']
-        period = predictions['temporal']['predicted_period']
-        barycentre = predictions['temporal']['barycentre_year']
+    for book_id, chunks in books.items():
+        true_gender = chunks[0]['gender_label']
+        true_temporal = chunks[0]['temporal_label']
         
-        print("\nPériode temporelle:")
-        print("  Prédiction: {}".format(period))
-        print("  Confiance: {:.1%}".format(temporal_conf))
-        print("  Année estimée (barycentre): {:.0f}".format(barycentre))
+        gender_preds = np.array([chunk['gender_pred'] for chunk in chunks])
+        temporal_preds = np.array([chunk['temporal_pred'] for chunk in chunks])
+        gender_probs = np.array([chunk['gender_probs'] for chunk in chunks])
+        temporal_probs = np.array([chunk['temporal_probs'] for chunk in chunks])
         
-        probs = predictions['temporal']['probabilities']
-        top_periods = sorted(enumerate(probs), key=lambda x: x[1], reverse=True)[:3]
+        result = {
+            'book_id': book_id,
+            'true_gender': true_gender,
+            'true_temporal': true_temporal,
+            'num_chunks': len(chunks),
+            'true_year': config.TEMPORAL_MIDPOINTS[true_temporal]
+        }
         
-        print("  Top 3 périodes:")
-        for i, (period_idx, prob) in enumerate(top_periods, 1):
-            period_name = config.TEMPORAL_PERIODS[period_idx]
-            print("    {}. {}: {:.1%}".format(i, period_name, prob))
-
-def interactive_text_test(model, tokenizer):
-    print("\nInterface de test interactif")
-    print("=" * 60)
-    print("Testez le modèle BAM sur vos propres textes !")
-    print("Tapez 'quit' pour quitter, 'help' pour l'aide")
-    
-    while True:
-        print("\n" + "-" * 50)
-        user_input = input("Entrez votre texte (ou 'quit'/'help'): ").strip()
+        # 1. Vote majoritaire
+        gender_votes = Counter(gender_preds)
+        temporal_votes = Counter(temporal_preds)
         
-        if user_input.lower() == 'quit':
-            print("Au revoir !")
-            break
-        elif user_input.lower() == 'help':
-            print("\nAide:")
-            print("- Entrez un texte littéraire français")
-            print("- Le modèle prédit le sexe de l'auteur et la période")
-            print("- Commandes:")
-            print("  'exemple' - Teste avec des exemples prédéfinis")
-            print("  'fichier' - Charge un texte depuis un fichier")
-            print("  'quit' - Quitter")
-            continue
-        elif user_input.lower() == 'exemple':
-            exemples = [
-                {
-                    'text': "Il était une fois, dans un château lointain, une princesse qui rêvait de liberté. Les murs dorés de sa prison ne pouvaient contenir son esprit aventureux.",
-                    'description': "Style conte classique"
-                },
-                {
-                    'text': "Le métro parisien grondait sous nos pieds. Dans cette foule anonyme, chacun portait ses secrets, ses espoirs brisés, ses amours perdues.",
-                    'description': "Style moderne urbain"
-                },
-                {
-                    'text': "Mon cher ami, permettez-moi de vous conter cette histoire extraordinaire qui bouleversa ma tranquille existence bourgeoise.",
-                    'description': "Style XIXe siècle"
-                },
-                {
-                    'text': "Elle regardait par la fenêtre de sa chambre, songeant aux lettres qu'elle n'oserait jamais écrire. Son cœur battait la chamade à la pensée de cet amour impossible.",
-                    'description': "Style romantique"
-                }
-            ]
+        result['vote_gender'] = gender_votes.most_common(1)[0][0]
+        result['vote_temporal'] = temporal_votes.most_common(1)[0][0]
+        result['vote_year'] = config.TEMPORAL_MIDPOINTS[result['vote_temporal']]
+        
+        # 2. Moyenne des probabilités (barycentre softmax)
+        gender_probs_mean = np.mean(gender_probs, axis=0)
+        temporal_probs_mean = np.mean(temporal_probs, axis=0)
+        
+        result['barycentre_gender'] = np.argmax(gender_probs_mean)
+        result['barycentre_temporal'] = np.argmax(temporal_probs_mean)
+        
+        temporal_weights = temporal_probs_mean
+        estimated_year_barycentre = sum(w * config.TEMPORAL_MIDPOINTS[i] for i, w in enumerate(temporal_weights))
+        result['barycentre_year'] = estimated_year_barycentre
+        
+        # 3. Moyenne des centres de classes
+        estimated_year_centres = np.mean([config.TEMPORAL_MIDPOINTS[pred] for pred in temporal_preds])
+        result['centres_year'] = estimated_year_centres
+        result['centres_temporal'] = min(range(10), key=lambda i: abs(config.TEMPORAL_MIDPOINTS[i] - estimated_year_centres))
+        result['centres_gender'] = int(round(np.mean(gender_preds)))
+        
+        # 4. Barycentre pondéré par confiance
+        temporal_weighted_sum = 0.0
+        temporal_weights_sum = 0.0
+        
+        for chunk in chunks:
+            pred_class = chunk['temporal_pred']
+            pred_year = config.TEMPORAL_MIDPOINTS[pred_class]
+            confidence = chunk['temporal_probs'][pred_class]
             
-            for i, exemple in enumerate(exemples, 1):
-                print("\nExemple {}: {}".format(i, exemple['description']))
-                print("Texte: {}...".format(exemple['text'][:100]))
-                predictions = predict_single_text(model, tokenizer, exemple['text'])
-                display_predictions(predictions)
-            continue
-        elif user_input.lower() == 'fichier':
-            file_path = input("Chemin du fichier texte: ").strip()
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    file_text = f.read().strip()
-                if file_text:
-                    print("Fichier chargé ({} caractères)".format(len(file_text)))
-                    if len(file_text) > 2000:
-                        file_text = file_text[:2000]
-                        print("Texte tronqué à 2000 caractères")
-                    predictions = predict_single_text(model, tokenizer, file_text)
-                    display_predictions(predictions)
-                else:
-                    print("Fichier vide")
-            except Exception as e:
-                print("Erreur lecture fichier: {}".format(e))
-            continue
+            temporal_weighted_sum += pred_year * confidence
+            temporal_weights_sum += confidence
         
-        if not user_input:
-            print("Texte vide, veuillez entrer du texte")
-            continue
+        temporal_pondere_year = temporal_weighted_sum / temporal_weights_sum if temporal_weights_sum > 0 else 1920
+        result['pondere_year'] = temporal_pondere_year
+        result['pondere_temporal'] = min(range(10), key=lambda i: abs(config.TEMPORAL_MIDPOINTS[i] - temporal_pondere_year))
         
-        try:
-            predictions = predict_single_text(model, tokenizer, user_input)
-            display_predictions(predictions)
-        except Exception as e:
-            print("Erreur lors de la prédiction: {}".format(e))
+        book_results.append(result)
+    
+    return book_results
+
+class BookTester:
+    def __init__(self, model, tokenizer, test_data):
+        self.model = model
+        self.tokenizer = tokenizer
+        self.test_data = test_data
+        
+        # Organiser les données par livre
+        self.books = defaultdict(list)
+        for chunk in test_data:
+            self.books[chunk['book_id']].append(chunk)
+        
+        self.book_ids = list(self.books.keys())
+        print("Livres disponibles pour test: {}".format(len(self.book_ids)))
+    
+    def get_book_metadata(self, book_id):
+        if book_id not in self.books:
+            return None
+        
+        chunks = self.books[book_id]
+        first_chunk = chunks[0]
+        
+        # Extraire le titre et l'auteur du nom de fichier si disponible
+        title = "Titre inconnu"
+        author = "Auteur inconnu"
+        
+        if 'filename' in first_chunk:
+            parts = first_chunk['filename'].split(')')
+            if len(parts) >= 2:
+                author = parts[0].strip('()')
+                title = parts[1].strip('()')
+        elif 'titre' in first_chunk and 'auteur' in first_chunk:
+            title = first_chunk['titre']
+            author = first_chunk['auteur']
+        
+        return {
+            'book_id': book_id,
+            'title': title,
+            'author': author,
+            'num_chunks': len(chunks),
+            'true_gender': first_chunk['sexe'],
+            'true_temporal': first_chunk['classe_temporelle'],
+            'true_gender_str': 'Femme' if first_chunk['sexe'] == 1 else 'Homme',
+            'true_temporal_str': config.TEMPORAL_PERIODS[first_chunk['classe_temporelle']],
+            'true_year': config.TEMPORAL_MIDPOINTS[first_chunk['classe_temporelle']]
+        }
+    
+    def predict_book(self, book_id):
+        if book_id not in self.books:
+            print("Livre {} non trouvé".format(book_id))
+            return None
+        
+        chunks = self.books[book_id]
+        
+        chunk_dataset = TextDataset(chunks, self.tokenizer, config.MAX_LENGTH)
+        chunk_loader = DataLoader(chunk_dataset, batch_size=config.BATCH_SIZE, shuffle=False)
+        
+        predictions = predict_chunks(self.model, chunk_loader)
+        book_results = aggregate_by_book(predictions)
+        
+        return book_results[0]
+    
+    def test_random_book(self):
+        book_id = random.choice(self.book_ids)
+        return self.test_book(book_id)
+    
+    def test_book(self, book_id):
+        metadata = self.get_book_metadata(book_id)
+        if metadata is None:
+            print("Livre {} non trouvé".format(book_id))
+            return None
+        
+        print("\nTest du livre")
+        print("=" * 60)
+        print("ID: {}".format(metadata['book_id']))
+        print("Titre: {}".format(metadata['title']))
+        print("Auteur: {}".format(metadata['author']))
+        print("Chunks: {}".format(metadata['num_chunks']))
+        print("Vérité - Genre: {}".format(metadata['true_gender_str']))
+        print("Vérité - Époque: {} (année centrale: {})".format(metadata['true_temporal_str'], metadata['true_year']))
+        
+        print("\nPrédiction en cours...")
+        result = self.predict_book(book_id)
+        
+        if result is None:
+            print("Échec de la prédiction")
+            return None
+        
+        print("\nRésultats:")
+        print("-" * 60)
+        
+        # Méthode 1: Vote majoritaire
+        if 'vote_gender' in result:
+            gender_pred = 'Femme' if result['vote_gender'] == 1 else 'Homme'
+            temporal_pred = config.TEMPORAL_PERIODS[result['vote_temporal']]
+            gender_correct = result['vote_gender'] == metadata['true_gender']
+            temporal_correct = result['vote_temporal'] == metadata['true_temporal']
+            
+            gender_status = "CORRECT" if gender_correct else "INCORRECT"
+            temporal_status = "CORRECT" if temporal_correct else "INCORRECT"
+            
+            print("Vote majoritaire:")
+            print("  Genre: {} ({})".format(gender_pred, gender_status))
+            print("  Époque: {} ({})".format(temporal_pred, temporal_status))
+            
+            year_diff = abs(result['vote_year'] - metadata['true_year'])
+            year_accurate = year_diff <= 25
+            year_status = "CORRECT" if year_accurate else "INCORRECT"
+            
+            print("  Année estimée: {:.1f} (diff: {:.1f} ans) ({})".format(
+                result['vote_year'], year_diff, year_status))
+        
+        # Méthode 2: Barycentre softmax
+        if 'barycentre_gender' in result:
+            gender_pred = 'Femme' if result['barycentre_gender'] == 1 else 'Homme'
+            temporal_pred = config.TEMPORAL_PERIODS[result['barycentre_temporal']]
+            gender_correct = result['barycentre_gender'] == metadata['true_gender']
+            temporal_correct = result['barycentre_temporal'] == metadata['true_temporal']
+            
+            gender_status = "CORRECT" if gender_correct else "INCORRECT"
+            temporal_status = "CORRECT" if temporal_correct else "INCORRECT"
+            
+            print("\nBarycentre softmax:")
+            print("  Genre: {} ({})".format(gender_pred, gender_status))
+            print("  Époque: {} ({})".format(temporal_pred, temporal_status))
+            
+            year_diff = abs(result['barycentre_year'] - metadata['true_year'])
+            year_accurate = year_diff <= 25
+            year_status = "CORRECT" if year_accurate else "INCORRECT"
+            
+            print("  Année estimée: {:.1f} (diff: {:.1f} ans) ({})".format(
+                result['barycentre_year'], year_diff, year_status))
+        
+        # Méthode 3: Centres des classes
+        if 'centres_gender' in result:
+            gender_pred = 'Femme' if result['centres_gender'] == 1 else 'Homme'
+            temporal_pred = config.TEMPORAL_PERIODS[result['centres_temporal']]
+            gender_correct = result['centres_gender'] == metadata['true_gender']
+            temporal_correct = result['centres_temporal'] == metadata['true_temporal']
+            
+            gender_status = "CORRECT" if gender_correct else "INCORRECT"
+            temporal_status = "CORRECT" if temporal_correct else "INCORRECT"
+            
+            print("\nCentres des classes:")
+            print("  Genre: {} ({})".format(gender_pred, gender_status))
+            print("  Époque: {} ({})".format(temporal_pred, temporal_status))
+            
+            year_diff = abs(result['centres_year'] - metadata['true_year'])
+            year_accurate = year_diff <= 25
+            year_status = "CORRECT" if year_accurate else "INCORRECT"
+            
+            print("  Année estimée: {:.1f} (diff: {:.1f} ans) ({})".format(
+                result['centres_year'], year_diff, year_status))
+        
+        # Méthode 4: Barycentre pondéré
+        if 'pondere_temporal' in result:
+            temporal_pred = config.TEMPORAL_PERIODS[result['pondere_temporal']]
+            temporal_correct = result['pondere_temporal'] == metadata['true_temporal']
+            
+            temporal_status = "CORRECT" if temporal_correct else "INCORRECT"
+            
+            print("\nBarycentre pondéré confiance:")
+            print("  Époque: {} ({})".format(temporal_pred, temporal_status))
+            
+            year_diff = abs(result['pondere_year'] - metadata['true_year'])
+            year_accurate = year_diff <= 25
+            year_status = "CORRECT" if year_accurate else "INCORRECT"
+            
+            print("  Année estimée: {:.1f} (diff: {:.1f} ans) ({})".format(
+                result['pondere_year'], year_diff, year_status))
+        
+        return result
+    
+    def list_books(self, limit=10):
+        print("\nLivres disponibles:")
+        print("-" * 60)
+        
+        for i, book_id in enumerate(self.book_ids[:limit]):
+            metadata = self.get_book_metadata(book_id)
+            print("{}. {} - {} ({})".format(
+                i+1, metadata['title'], metadata['author'], metadata['true_temporal_str']))
+        
+        if len(self.book_ids) > limit:
+            print("... et {} autres livres".format(len(self.book_ids) - limit))
+    
+    def search_books(self, query):
+        query = query.lower()
+        results = []
+        
+        for book_id in self.book_ids:
+            metadata = self.get_book_metadata(book_id)
+            if query in metadata['title'].lower() or query in metadata['author'].lower():
+                results.append((book_id, metadata))
+        
+        print("\nRésultats de recherche ({} trouvés):".format(len(results)))
+        print("-" * 60)
+        
+        for i, (book_id, metadata) in enumerate(results):
+            print("{}. {} - {} ({})".format(
+                i+1, metadata['title'], metadata['author'], metadata['true_temporal_str']))
+        
+        return results
+    
+    def interactive_session(self):
+        print("\nSession interactive")
+        print("=" * 60)
+        print("Commandes disponibles:")
+        print("- 'random' : Tester un livre aléatoire")
+        print("- 'list [N]' : Lister N livres (défaut: 10)")
+        print("- 'search TERME' : Rechercher par titre ou auteur")
+        print("- 'test ID' : Tester un livre spécifique")
+        print("- 'help' : Afficher cette aide")
+        print("- 'quit' : Quitter")
+        
+        while True:
+            command = input("\n> ").strip()
+            
+            if command.lower() == "quit":
+                print("Au revoir!")
+                break
+            
+            elif command.lower() == "help":
+                print("\nCommandes disponibles:")
+                print("- 'random' : Tester un livre aléatoire")
+                print("- 'list [N]' : Lister N livres (défaut: 10)")
+                print("- 'search TERME' : Rechercher par titre ou auteur")
+                print("- 'test ID' : Tester un livre spécifique")
+                print("- 'quit' : Quitter")
+            
+            elif command.lower() == "random":
+                self.test_random_book()
+            
+            elif command.lower().startswith("list"):
+                parts = command.split()
+                limit = 10
+                if len(parts) > 1 and parts[1].isdigit():
+                    limit = int(parts[1])
+                self.list_books(limit)
+            
+            elif command.lower().startswith("search"):
+                query = command[7:].strip()
+                if not query:
+                    print("Terme de recherche manquant")
+                    continue
+                self.search_books(query)
+            
+            elif command.lower().startswith("test"):
+                book_id = command[5:].strip()
+                if not book_id:
+                    print("ID de livre manquant")
+                    continue
+                self.test_book(book_id)
+            
+            else:
+                print("Commande inconnue. Tapez 'help' pour voir les commandes disponibles.")
 
 def main():
-    print("Interface de test BAM")
+    print("Interface de test sophistiquée BAM")
     print("=" * 60)
     
-    model, tokenizer = load_model()
+    # Charger les données de test
+    test_data = load_test_data()
+    if not test_data:
+        print("Impossible de charger les données de test.")
+        return
     
+    # Charger le modèle
+    model, tokenizer = load_model()
     if model is None or tokenizer is None:
         print("Impossible de charger le modèle. Vérifiez que l'entraînement a été effectué.")
         return
     
-    interactive_text_test(model, tokenizer)
+    # Créer et lancer l'interface
+    tester = BookTester(model, tokenizer, test_data)
+    tester.interactive_session()
 
 if __name__ == "__main__":
     main()
