@@ -20,8 +20,8 @@ from collections import defaultdict, Counter
 import warnings
 warnings.filterwarnings('ignore')
 
-from bam_project import BertBAM, TextDataset, Config, device
-
+from bam_project import BertBAM, TextDataset, Config
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 class EvaluationConfig:
     DATA_DIR = '/content/preprocessed_data'
     MODELS_DIR = '/content/models'
