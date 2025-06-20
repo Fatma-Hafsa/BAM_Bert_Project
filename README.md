@@ -357,6 +357,9 @@ Ces résultats confirment la faisabilité des tâches et établissent des baseli
 - Student avec distillation : Loss = (1-α) × Loss_classification + α × Loss_distillation
 
 **Résultats et discussion** :
+
+
+
 ![alt text](plots/bam_student_evaluation.png)
 
 
