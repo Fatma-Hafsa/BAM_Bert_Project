@@ -1,6 +1,6 @@
 """
-Interface de test sophistiquée pour le projet BAM
-Permet de tester le modèle sur les livres du corpus avec navigation et comparaison
+Interface de test pour le projet BAM
+Permet de tester le modèle sur les livres du corpus 
 """
 
 import os
