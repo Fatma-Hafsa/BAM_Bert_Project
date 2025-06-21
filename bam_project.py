@@ -928,15 +928,7 @@ def main():
         print("Genre: {:.1%}".format(results['book_gender_acc']))
         print("Temporel: {:.1%}".format(results['book_temporal_acc']))
         print("Livres évalués: {}".format(len(results['book_results'])))
-    
-    print("\nTechniques utilisées:")
-    print("Distillation BAM (alpha={}, temperature={})".format(config.ALPHA_DISTILL, config.TEMPERATURE))
-    print("Teacher Annealing ({:.1%} -> {:.1%})".format(config.ANNEALING_START, config.ANNEALING_END))
-    print("Feature Annealing (attention BERT)")
-    print("Split par livre (sans data leakage)")
-    print("Validation statistique avec bootstrap")
-    print("Initialisation Xavier")
-    
+ 
     temporal_acc_final = results['book_temporal_acc'] if results['book_results'] else results['chunk_temporal_acc']
     
     
@@ -957,7 +949,6 @@ def main():
     except Exception as e:
         print("Erreur sauvegarde: {}".format(e))
     
-    print("\nProjet BAM terminé!")
     print("Performance temporelle finale: {:.1%}".format(temporal_acc_final))
     
     return results
