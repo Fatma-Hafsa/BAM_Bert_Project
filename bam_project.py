@@ -927,7 +927,6 @@ def main():
         print("\nPerformance (livres):")
         print("Genre: {:.1%}".format(results['book_gender_acc']))
         print("Temporel: {:.1%}".format(results['book_temporal_acc']))
-        print("Livres évalués: {}".format(len(results['book_results'])))
  
     temporal_acc_final = results['book_temporal_acc'] if results['book_results'] else results['chunk_temporal_acc']
     
@@ -938,7 +937,6 @@ def main():
         'config': {k: v for k, v in config.__dict__.items() if not k.startswith('__')},
         'results': results,
         'training_history': trainer.training_history,
-        'objective_achieved': temporal_acc_final >= 0.70
     }
     
     try:
